@@ -472,13 +472,18 @@ function buildLive(){
       const currentMins=Math.floor(((S.playerAccTime[pid]||0)+(S.gameSecs-(S.playerOnSince[pid]||0)))/60);
       return`<div class="chip" style="background:var(--gnl);border-color:rgba(30,132,73,0.3)"><div class="chip-jersey" style="background:${posColor(p.pos)}">${esc(p.jersey)}</div><span class="chip-name">${esc(p.name.split(' ')[0])}</span><span id="pt-${pid}" style="font-size:10px;font-weight:700;color:var(--gn);margin-left:3px">${currentMins}'</span></div>`;
     }).join('')}</div>
-    ${Object.keys(S.playerAccTime).filter(id=>!S.onField.has(id)).length>0?`
-    <div class="sect" style="margin-top:10px"><span>BENCH (played)</span><div class="sect-line"></div></div>
-    <div class="field-now-wrap">${Object.entries(S.playerAccTime).filter(([id])=>!S.onField.has(id)).map(([id,secs])=>{
-      const p=S.players.find(x=>x.id===id);if(!p)return'';
-      // Frozen time — this player is off, their clock is paused
-      return`<div class="chip" style="background:var(--sf);border-color:var(--br)"><div class="chip-jersey" style="background:${posColor(p.pos)}">${esc(p.jersey)}</div><span class="chip-name">${esc(p.name.split(' ')[0])}</span><span style="font-size:10px;font-weight:700;color:var(--mu);margin-left:3px">${Math.floor(secs/60)}'</span></div>`;
-    }).join('')}</div>`:''}
+    ${(()=>{
+      // Every player NOT currently on the field — covers both waiting subs and subbed-off players
+      const benchPlayers=S.players.filter(p=>!S.onField.has(p.id));
+      if(!benchPlayers.length)return'';
+      return`<div class="sect" style="margin-top:10px"><span>BENCH — ${benchPlayers.length}</span><div class="sect-line"></div></div>
+    <div class="field-now-wrap">${benchPlayers.map(p=>{
+        // Show frozen minutes if this player has been on the field, otherwise nothing
+        const banked=S.playerAccTime[p.id];
+        const timeLabel=banked!==undefined?`<span style="font-size:10px;font-weight:700;color:var(--mu);margin-left:3px">${Math.floor(banked/60)}'</span>`:'';
+        return`<div class="chip" style="background:var(--sf);border-color:var(--br)"><div class="chip-jersey" style="background:${posColor(p.pos)}">${esc(p.jersey)}</div><span class="chip-name">${esc(p.name.split(' ')[0])}</span>${timeLabel}</div>`;
+      }).join('')}</div>`;
+    })()}
 
   `;
 }
@@ -788,6 +793,7 @@ window.clearDemoAndStart=clearDemoAndStart;
 window.exportData=exportData;
 window.handleImportFile=handleImportFile;
 window.restoreFromCode=restoreFromCode;
+window.render=render; // needed so inline onclick="...;render()" can trigger a re-draw
 window.S=S;
 
 // ─── INIT ──────────────────────────────────────────────────────────────────────
