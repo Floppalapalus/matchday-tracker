@@ -194,6 +194,9 @@ let S={
   phase:'plan',opponent:'',matchDate:'',format:'11v11',formation:'4-3-3',
   lineup:{},subPlan:[],gameGoals:['','',''],
   gameSecs:0,timerOn:false,liveLog:[],onField:new Set(),confirmEnd:false,
+  // playerOnSince: when each on-field player last came on (in gameSecs)
+  // playerAccTime: banked seconds for players who have been subbed off
+  playerOnSince:{},playerAccTime:{},
   pickerSlot:null,
   showAddPlayer:false,editPlayerId:null,formName:'',formJersey:'',formPos:'MID',formAge:'',formNotes:'',
   showSubPlanAdd:false,spOutId:'',spInId:'',spMin:'',spReason:'',
@@ -321,7 +324,20 @@ async function restoreFromCode(code){
 
 // ─── TIMER ────────────────────────────────────────────────────────────────────
 let timerInterval=null;
-function startTimer(){if(timerInterval)return;timerInterval=setInterval(()=>{S.gameSecs++;const el=document.getElementById('live-timer');if(el)el.textContent=fmtTime(S.gameSecs);const el2=document.getElementById('live-min');if(el2)el2.textContent=Math.floor(S.gameSecs/60)+"'";},1000);}
+function startTimer(){
+  if(timerInterval)return;
+  timerInterval=setInterval(()=>{
+    S.gameSecs++;
+    // Update the main scoreboard clock
+    const el=document.getElementById('live-timer');if(el)el.textContent=fmtTime(S.gameSecs);
+    const el2=document.getElementById('live-min');if(el2)el2.textContent=Math.floor(S.gameSecs/60)+"'";
+    // Update each on-field player's personal minute counter without re-rendering
+    Object.entries(S.playerOnSince).forEach(([id,startSecs])=>{
+      const el3=document.getElementById('pt-'+id);
+      if(el3)el3.textContent=Math.floor(((S.playerAccTime[id]||0)+(S.gameSecs-startSecs))/60)+"'";
+    });
+  },1000);
+}
 function stopTimer(){clearInterval(timerInterval);timerInterval=null;}
 
 // ─── RENDER ────────────────────────────────────────────────────────────────────
@@ -450,7 +466,20 @@ function buildLive(){
     <button class="sub-btn" onclick="openSubModal()">🔄 Make substitution <span id="live-min" style="font-size:12px;opacity:0.6">${min}'</span></button>
     ${S.liveLog.length>0?`<div class="sect"><span>EVENTS</span><div class="sect-line"></div></div>${[...S.liveLog].reverse().map(ev=>{const p=S.players.find(x=>x.id===ev.scorerId);const ap=S.players.find(x=>x.id===ev.assistId);const outp=S.players.find(x=>x.id===ev.outId);const inp=S.players.find(x=>x.id===ev.inId);return`<div class="event-card"><span style="font-size:16px">${ev.type==='goal'?(ev.team==='us'?'⚽':'🔴'):'🔄'}</span><div style="flex:1">${ev.type==='goal'?`<div style="font-size:13px;font-weight:600">${ev.team==='us'?`Goal — ${esc(p?.name||'?')}${ap?` · 🅰️${esc(ap.name.split(' ')[0])}`:''}`:' Conceded'}</div>`:''} ${ev.type==='sub'?`<div style="font-size:13px;font-weight:600">${esc(inp?.name.split(' ')[0]||'?')} ↑ · ${esc(outp?.name.split(' ')[0]||'?')} ↓</div>`:''}<div style="font-size:11px;color:var(--mu)">${ev.min}'</div></div></div>`;}).join('')}`:''}
     <div class="sect"><span>ON FIELD — ${[...S.onField].length}</span><div class="sect-line"></div></div>
-    <div class="field-now-wrap">${[...S.onField].map(pid=>{const p=S.players.find(x=>x.id===pid);if(!p)return'';return`<div class="chip" style="background:var(--gnl);border-color:rgba(30,132,73,0.3)"><div class="chip-jersey" style="background:${posColor(p.pos)}">${esc(p.jersey)}</div><span class="chip-name">${esc(p.name.split(' ')[0])}</span></div>`;}).join('')}</div>
+    <div class="field-now-wrap">${[...S.onField].map(pid=>{
+      const p=S.players.find(x=>x.id===pid);if(!p)return'';
+      // Show ticking minute counter — updated each second by startTimer without re-render
+      const currentMins=Math.floor(((S.playerAccTime[pid]||0)+(S.gameSecs-(S.playerOnSince[pid]||0)))/60);
+      return`<div class="chip" style="background:var(--gnl);border-color:rgba(30,132,73,0.3)"><div class="chip-jersey" style="background:${posColor(p.pos)}">${esc(p.jersey)}</div><span class="chip-name">${esc(p.name.split(' ')[0])}</span><span id="pt-${pid}" style="font-size:10px;font-weight:700;color:var(--gn);margin-left:3px">${currentMins}'</span></div>`;
+    }).join('')}</div>
+    ${Object.keys(S.playerAccTime).filter(id=>!S.onField.has(id)).length>0?`
+    <div class="sect" style="margin-top:10px"><span>BENCH (played)</span><div class="sect-line"></div></div>
+    <div class="field-now-wrap">${Object.entries(S.playerAccTime).filter(([id])=>!S.onField.has(id)).map(([id,secs])=>{
+      const p=S.players.find(x=>x.id===id);if(!p)return'';
+      // Frozen time — this player is off, their clock is paused
+      return`<div class="chip" style="background:var(--sf);border-color:var(--br)"><div class="chip-jersey" style="background:${posColor(p.pos)}">${esc(p.jersey)}</div><span class="chip-name">${esc(p.name.split(' ')[0])}</span><span style="font-size:10px;font-weight:700;color:var(--mu);margin-left:3px">${Math.floor(secs/60)}'</span></div>`;
+    }).join('')}</div>`:''}
+
   `;
 }
 
@@ -663,7 +692,16 @@ function openSubPlanAdd(){S.showSubPlanAdd=true;S.spOutId='';S.spInId='';S.spMin
 function closeSubPlanAdd(){S.showSubPlanAdd=false;render();}
 function saveSubPlan(){if(!S.spOutId||!S.spInId)return;S.subPlan=[...S.subPlan,{id:uid(),outId:S.spOutId,inId:S.spInId,min:parseInt(S.spMin)||60,reason:S.spReason}];S.showSubPlanAdd=false;render();}
 function removeSubPlan(id){S.subPlan=S.subPlan.filter(s=>s.id!==id);render();}
-function startGame(){const assigned=Object.values(S.lineup).filter(Boolean);if(!assigned.length)return;S.onField=new Set(assigned);S.liveLog=[];S.gameSecs=0;S.confirmEnd=false;S.timerOn=true;S.phase='live';render();startTimer();}
+function startGame(){
+  const assigned=Object.values(S.lineup).filter(Boolean);
+  if(!assigned.length)return;
+  S.onField=new Set(assigned);
+  S.liveLog=[];S.gameSecs=0;S.confirmEnd=false;S.timerOn=true;S.phase='live';
+  // Start every starter's clock at 0
+  S.playerOnSince={};S.playerAccTime={};
+  assigned.forEach(id=>{S.playerOnSince[id]=0;});
+  render();startTimer();
+}
 function toggleTimer(){if(S.timerOn){stopTimer();S.timerOn=false;}else{S.timerOn=true;startTimer();}render();}
 function showEndConfirm(){S.confirmEnd=true;render();}
 function hideEndConfirm(){S.confirmEnd=false;render();}
@@ -680,7 +718,18 @@ function endGame(){
 }
 function openSubModal(){S.showSubModal=true;S.lsOutId='';S.lsInId='';render();}
 function closeSubModal(){S.showSubModal=false;render();}
-function confirmSub(){if(!S.lsOutId||!S.lsInId)return;const min=Math.floor(S.gameSecs/60);S.liveLog=[...S.liveLog,{id:uid(),type:'sub',min,outId:S.lsOutId,inId:S.lsInId}];const nof=new Set(S.onField);nof.delete(S.lsOutId);nof.add(S.lsInId);S.onField=nof;S.showSubModal=false;render();}
+function confirmSub(){
+  if(!S.lsOutId||!S.lsInId)return;
+  const min=Math.floor(S.gameSecs/60);
+  S.liveLog=[...S.liveLog,{id:uid(),type:'sub',min,outId:S.lsOutId,inId:S.lsInId}];
+  const nof=new Set(S.onField);nof.delete(S.lsOutId);nof.add(S.lsInId);S.onField=nof;
+  // Freeze the outgoing player's clock — add their current stint to their banked total
+  S.playerAccTime[S.lsOutId]=(S.playerAccTime[S.lsOutId]||0)+(S.gameSecs-(S.playerOnSince[S.lsOutId]||0));
+  delete S.playerOnSince[S.lsOutId];
+  // Start the incoming player's clock from this moment (resumes if they were on before)
+  S.playerOnSince[S.lsInId]=S.gameSecs;
+  S.showSubModal=false;render();
+}
 function openGoal(team){S.showGoalModal=true;S.lgTeam=team;S.lgScorerId='';S.lgAssistId='';render();}
 function closeGoalModal(){S.showGoalModal=false;render();}
 function confirmGoal(){if(S.lgTeam==='us'&&!S.lgScorerId)return;const min=Math.floor(S.gameSecs/60);S.liveLog=[...S.liveLog,{id:uid(),type:'goal',min,team:S.lgTeam,scorerId:S.lgScorerId,assistId:S.lgAssistId}];S.showGoalModal=false;render();}
