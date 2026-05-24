@@ -238,12 +238,28 @@ function updateSyncDot(){
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 function save(){
-  if(S.isDemo)return;
+  if(S.isDemo)return; // demo data is intentionally not persisted
   try{
+    // Roster and identity
     localStorage.setItem('gdm_players',JSON.stringify(S.players));
     localStorage.setItem('gdm_games',JSON.stringify(S.games));
     localStorage.setItem('gdm_team',S.teamName);
     localStorage.setItem('gdm_coach_id',S.coachId);
+    // Match plan — opponent, lineup, game goals survive a reload
+    localStorage.setItem('gdm_phase',S.phase);
+    localStorage.setItem('gdm_opponent',S.opponent);
+    localStorage.setItem('gdm_matchDate',S.matchDate);
+    localStorage.setItem('gdm_format',S.format);
+    localStorage.setItem('gdm_formation',S.formation);
+    localStorage.setItem('gdm_lineup',JSON.stringify(S.lineup));
+    localStorage.setItem('gdm_gameGoals',JSON.stringify(S.gameGoals));
+    localStorage.setItem('gdm_subPlan',JSON.stringify(S.subPlan));
+    // Live game state — goals, subs, and elapsed time survive a reload mid-game
+    localStorage.setItem('gdm_gameSecs',String(S.gameSecs));
+    localStorage.setItem('gdm_liveLog',JSON.stringify(S.liveLog));
+    localStorage.setItem('gdm_onField',JSON.stringify([...S.onField])); // Set → Array for JSON
+    localStorage.setItem('gdm_playerOnSince',JSON.stringify(S.playerOnSince));
+    localStorage.setItem('gdm_playerAccTime',JSON.stringify(S.playerAccTime));
   }catch(e){}
   scheduleSync();
 }
@@ -256,6 +272,25 @@ function load(){
     const c=localStorage.getItem('gdm_coach_id');
     if(c){S.coachId=c;}
     else{S.coachId=uid()+uid()+uid();localStorage.setItem('gdm_coach_id',S.coachId);}
+    // Restore match plan details so opponent, lineup, and goals survive a reload
+    const opp=localStorage.getItem('gdm_opponent');if(opp!==null)S.opponent=opp;
+    const md=localStorage.getItem('gdm_matchDate');if(md!==null)S.matchDate=md;
+    const fmt=localStorage.getItem('gdm_format');if(fmt)S.format=fmt;
+    const fmtn=localStorage.getItem('gdm_formation');if(fmtn)S.formation=fmtn;
+    const lu=localStorage.getItem('gdm_lineup');if(lu)S.lineup=JSON.parse(lu);
+    const gg=localStorage.getItem('gdm_gameGoals');if(gg)S.gameGoals=JSON.parse(gg);
+    const sp=localStorage.getItem('gdm_subPlan');if(sp)S.subPlan=JSON.parse(sp);
+    // Only restore live game state if a game was actually in progress when the page closed
+    const savedPhase=localStorage.getItem('gdm_phase');
+    if(savedPhase==='live'){
+      const ll=localStorage.getItem('gdm_liveLog');if(ll)S.liveLog=JSON.parse(ll);
+      const secs=localStorage.getItem('gdm_gameSecs');if(secs)S.gameSecs=parseInt(secs,10);
+      const of=localStorage.getItem('gdm_onField');if(of)S.onField=new Set(JSON.parse(of)); // Array → Set
+      const pos=localStorage.getItem('gdm_playerOnSince');if(pos)S.playerOnSince=JSON.parse(pos);
+      const pat=localStorage.getItem('gdm_playerAccTime');if(pat)S.playerAccTime=JSON.parse(pat);
+      S.phase='live';
+      S.timerOn=false; // always start paused — coach taps Resume to continue
+    }
   }catch(e){
     if(!S.coachId)S.coachId=uid()+uid()+uid();
   }
@@ -336,6 +371,8 @@ function startTimer(){
       const el3=document.getElementById('pt-'+id);
       if(el3)el3.textContent=Math.floor(((S.playerAccTime[id]||0)+(S.gameSecs-startSecs))/60)+"'";
     });
+    // Persist elapsed time every minute — so a reload never loses more than 60 seconds
+    if(S.gameSecs%60===0)save();
   },1000);
 }
 function stopTimer(){clearInterval(timerInterval);timerInterval=null;}
@@ -687,7 +724,7 @@ function copyCode(){if(navigator.clipboard)navigator.clipboard.writeText(S.coach
 function openAddPlayer(){S.showAddPlayer=true;S.editPlayerId=null;S.formName='';S.formJersey='';S.formPos='MID';S.formAge='';S.formNotes='';render();}
 function editPlayer(id){const p=S.players.find(x=>x.id===id);if(!p)return;S.showAddPlayer=true;S.editPlayerId=id;S.formName=p.name;S.formJersey=p.jersey;S.formPos=p.pos;S.formAge=p.age||'';S.formNotes=p.notes||'';render();}
 function closeAddPlayer(){S.showAddPlayer=false;S.editPlayerId=null;render();}
-function savePlayer(){if(!S.formName.trim())return;if(S.editPlayerId)S.players=S.players.map(p=>p.id===S.editPlayerId?{...p,name:S.formName.trim(),jersey:String(S.formJersey),pos:S.formPos,age:S.formAge,notes:S.formNotes}:p);else S.players=[...S.players,{id:uid(),name:S.formName.trim(),jersey:String(S.formJersey),pos:S.formPos,age:S.formAge,notes:S.formNotes,games:[]}];S.showAddPlayer=false;S.editPlayerId=null;save();render();}
+function savePlayer(){if(!S.formName.trim())return;if(S.editPlayerId)S.players=S.players.map(p=>p.id===S.editPlayerId?{...p,name:S.formName.trim(),jersey:String(S.formJersey),pos:S.formPos,age:S.formAge,notes:S.formNotes}:p);else S.players=[...S.players,{id:uid(),name:S.formName.trim(),jersey:String(S.formJersey),pos:S.formPos,age:S.formAge,notes:S.formNotes,games:[]}];S.showAddPlayer=false;S.editPlayerId=null;S.isDemo=false;save();render();}
 function removePlayer(id){if(!confirm('Remove this player?'))return;S.players=S.players.filter(p=>p.id!==id);save();render();}
 function openPicker(slotId){S.pickerSlot=slotId;render();}
 function closePicker(){S.pickerSlot=null;render();}
@@ -705,7 +742,7 @@ function startGame(){
   // Start every starter's clock at 0
   S.playerOnSince={};S.playerAccTime={};
   assigned.forEach(id=>{S.playerOnSince[id]=0;});
-  render();startTimer();
+  save();render();startTimer();
 }
 function toggleTimer(){if(S.timerOn){stopTimer();S.timerOn=false;}else{S.timerOn=true;startTimer();}render();}
 function showEndConfirm(){S.confirmEnd=true;render();}
@@ -733,11 +770,11 @@ function confirmSub(){
   delete S.playerOnSince[S.lsOutId];
   // Start the incoming player's clock from this moment (resumes if they were on before)
   S.playerOnSince[S.lsInId]=S.gameSecs;
-  S.showSubModal=false;render();
+  S.showSubModal=false;save();render();
 }
 function openGoal(team){S.showGoalModal=true;S.lgTeam=team;S.lgScorerId='';S.lgAssistId='';render();}
 function closeGoalModal(){S.showGoalModal=false;render();}
-function confirmGoal(){if(S.lgTeam==='us'&&!S.lgScorerId)return;const min=Math.floor(S.gameSecs/60);S.liveLog=[...S.liveLog,{id:uid(),type:'goal',min,team:S.lgTeam,scorerId:S.lgScorerId,assistId:S.lgAssistId}];S.showGoalModal=false;render();}
+function confirmGoal(){if(S.lgTeam==='us'&&!S.lgScorerId)return;const min=Math.floor(S.gameSecs/60);S.liveLog=[...S.liveLog,{id:uid(),type:'goal',min,team:S.lgTeam,scorerId:S.lgScorerId,assistId:S.lgAssistId}];S.showGoalModal=false;save();render();}
 function togglePtPlayer(pid){S.expandedPtPlayer=S.expandedPtPlayer===pid?null:pid;render();}
 function setIdpNote(pid,v){S.idpNotes[pid]=v;}
 function saveToProfiles(){
@@ -746,7 +783,7 @@ function saveToProfiles(){
   S.players=S.players.map(p=>{const mins=Math.round((pt[p.id]||0)/60);if(!mins)return p;const rec={id:g.id,date:g.date,opponent:g.opponent,result:g.result,mins,goals:us.filter(e=>e.scorerId===p.id).length,assists:us.filter(e=>e.assistId===p.id).length,note:S.idpNotes[p.id]||''};return{...p,games:[...(p.games||[]),rec]};});
   S.ptSaved=true;save();render();
 }
-function newGame(){S.phase='plan';S.opponent='';S.matchDate='';S.lineup={};S.subPlan=[];S.gameGoals=['','',''];S.liveLog=[];S.gameSecs=0;S.timerOn=false;S.onField=new Set();S.confirmEnd=false;S.activeGameId=null;render();}
+function newGame(){S.phase='plan';S.opponent='';S.matchDate='';S.lineup={};S.subPlan=[];S.gameGoals=['','',''];S.liveLog=[];S.gameSecs=0;S.timerOn=false;S.onField=new Set();S.confirmEnd=false;S.activeGameId=null;save();render();}
 function toggleProfile(id){S.openProfileId=S.openProfileId===id?null:id;render();}
 
 // expose functions called from inline HTML handlers
